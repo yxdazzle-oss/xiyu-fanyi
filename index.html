@@ -457,8 +457,8 @@
     const rms = Math.sqrt(sum / data.length);
     W.level = rms;
     // 自适应底噪：安静时快速下调，有声音时缓慢上调
-    W.noise = rms < W.noise ? W.noise * 0.9 + rms * 0.1 : W.noise * 0.997 + rms * 0.003;
     const voiced = rms > W.noise * 3 + 0.002;
+    W.noise = rms < W.noise ? W.noise * 0.9 + rms * 0.1 : W.noise * (voiced ? 0.9995 : 0.99) + rms * (voiced ? 0.0005 : 0.01);
     if (!W.speaking) {
       W.preroll.push(data); if (W.preroll.length > 4) W.preroll.shift();
       if (voiced) { W.speaking = true; W.chunks = W.preroll.slice(); W.preroll = []; W.segMs = W.chunks.length * ms; W.speechMs = ms; W.silenceMs = 0; }
