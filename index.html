@@ -100,6 +100,14 @@
       <option value="es-US">美国西语（es-US）</option>
     </select>
   </div>
+  <div class="field">
+    <span>断句：老师停顿多久再翻译</span>
+    <select id="pace">
+      <option value="fast">快（停顿 1 秒，可能断在半句）</option>
+      <option value="normal">标准（停顿 2 秒，推荐）</option>
+      <option value="full">完整（停顿 3.5 秒，最准但更慢）</option>
+    </select>
+  </div>
   <div class="field wide">
     <span>本节课主题 / 背景（可选，帮助 AI 翻得更准，比如：“A2 西语课，今天讲过去时 pretérito indefinido”或“INEF 运动训练学研讨课”）</span>
     <textarea id="topic"></textarea>
@@ -129,7 +137,7 @@
     set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
   };
 
-  let cfg = Object.assign({ provider:'deepseek', base:PRESETS.deepseek.base, model:PRESETS.deepseek.model, key:'', lang:'es-ES', topic:'' }, store.get(CFG_KEY, {}));
+  let cfg = Object.assign({ provider:'deepseek', base:PRESETS.deepseek.base, model:PRESETS.deepseek.model, key:'', lang:'es-ES', topic:'', pace:'normal' }, store.get(CFG_KEY, {}));
   if (cfg.model === 'deepseek-chat') cfg.model = 'deepseek-flash';
   let ui = Object.assign({ fontSize:24, showEs:true }, store.get(UI_KEY, {}));
   let segments = store.get(SEG_KEY, []);
@@ -149,11 +157,11 @@
 
   function fillSettings(){
     $('provider').value = cfg.provider; $('base').value = cfg.base; $('model').value = cfg.model;
-    $('apiKey').value = cfg.key; $('lang').value = cfg.lang; $('topic').value = cfg.topic;
+    $('apiKey').value = cfg.key; $('lang').value = cfg.lang; $('topic').value = cfg.topic; $('pace').value = cfg.pace;
   }
   function readSettings(){
     cfg.provider = $('provider').value; cfg.base = $('base').value.trim(); cfg.model = $('model').value.trim();
-    cfg.key = $('apiKey').value.trim(); cfg.lang = $('lang').value; cfg.topic = $('topic').value.trim();
+    cfg.key = $('apiKey').value.trim(); cfg.lang = $('lang').value; cfg.topic = $('topic').value.trim(); cfg.pace = $('pace').value;
     store.set(CFG_KEY, cfg);
   }
   $('provider').onchange = e => { const p = PRESETS[e.target.value]; if (p.base) { $('base').value = p.base; $('model').value = p.model; } };
@@ -215,7 +223,8 @@
   function systemPrompt(){
     return '你是西班牙语课堂的同声传译员，听众是一位正在学西语、还听不太懂的中国学生。\n' +
       '输入是浏览器语音识别出的老师讲话，可能缺标点、有同音词识别错误或半句话，请结合前文合理推断后翻译成自然、口语化的简体中文。\n' +
-      '规则：只输出这一句的中文译文，不要解释、不要加引号、不要重复前文；老师在讲解的西语单词或语法术语，保留西语原词并在括号里给中文，如“pretérito indefinido（简单过去时）”；如果内容只是语气词或无法辨认，输出“（……）”。' +
+      '输入是老师一次停顿前说的一整段话，可能包含好几句；请按完整意思翻译，最后半句如果明显没说完，也照常翻出来，不要自己补编。\n' +
+      '规则：只输出这一段的中文译文，不要解释、不要加引号、不要重复前文；老师在讲解的西语单词或语法术语，保留西语原词并在括号里给中文，如“pretérito indefinido（简单过去时）”；如果内容只是语气词或无法辨认，输出“（……）”。' +
       (cfg.topic ? '\n本节课背景：' + cfg.topic : '');
   }
 
@@ -223,7 +232,7 @@
     seg.zh = ''; seg.error = ''; seg.state = 'pending'; render(seg);
     const prev = segments.filter(s => s.id < seg.id).slice(-4)
       .map(s => '西：' + s.es + '\n中：' + (s.zh || '（翻译中）')).join('\n\n');
-    const user = (prev ? '【前文，仅供理解上下文，不要翻译】\n' + prev + '\n\n' : '') + '【请翻译这一句】\n' + seg.es;
+    const user = (prev ? '【前文，仅供理解上下文，不要翻译】\n' + prev + '\n\n' : '') + '【请翻译这一段】\n' + seg.es;
     try {
       await callLLM([{ role:'system', content:systemPrompt() }, { role:'user', content:user }], d => { seg.zh += d; render(seg); });
       seg.state = 'done';
@@ -289,6 +298,34 @@
     segments.push(seg); render(seg); translate(seg); persist();
   }
 
+  // ---------- 断句缓冲：等老师停顿后再整段翻译 ----------
+  const PACE = { fast:{ pause:1000, words:25 }, normal:{ pause:2000, words:45 }, full:{ pause:3500, words:70 } };
+  let buffer = [], flushTimer = null, bufStart = 0, interimText = '';
+  function pace(){ return PACE[cfg.pace] || PACE.normal; }
+  function pushChunk(t){
+    if (!buffer.length) bufStart = Date.now();
+    buffer.push(t); showLive(); scheduleFlush();
+  }
+  function scheduleFlush(){
+    clearTimeout(flushTimer);
+    if (!buffer.length) return;
+    const words = buffer.join(' ').split(/\s+/).length;
+    // 太长了就先翻，免得一直等
+    if (words >= pace().words || Date.now() - bufStart > 30000) { flush(); return; }
+    flushTimer = setTimeout(flush, pace().pause);
+  }
+  function flush(){
+    clearTimeout(flushTimer);
+    if (!buffer.length) return;
+    const text = buffer.join(' ').replace(/\s+/g, ' ').trim();
+    buffer = []; showLive();
+    if (text) addSegment(text);
+  }
+  function showLive(){
+    const b = buffer.join(' ');
+    $('interim').textContent = (b ? b + ' ' : '') + interimText;
+  }
+
   $('clearBtn').onclick = () => {
     if (!segments.length || !confirm('清空所有记录？（建议先导出笔记）')) return;
     segments = []; els.clear(); $('feed').innerHTML = ''; persist(); showEmpty();
@@ -321,11 +358,13 @@
       let interim = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const r = e.results[i];
-        if (r.isFinal) { const t = r[0].transcript.trim(); if (t) addSegment(t); }
+        if (r.isFinal) { const t = r[0].transcript.trim(); if (t) pushChunk(t); }
         else interim += r[0].transcript;
       }
       lastInterim = interim.trim();
-      $('interim').textContent = interim;
+      interimText = interim; showLive();
+      // 老师还在说：推迟断句
+      if (buffer.length && interim) scheduleFlush();
       // 老师一口气讲很久不停顿时，识别器可能迟迟不给最终结果：12 秒没更新就强制断句
       clearTimeout(interimTimer);
       if (lastInterim) interimTimer = setTimeout(() => { if (running && lastInterim) { try { rec.stop(); } catch(e){} } }, 12000);
@@ -341,10 +380,11 @@
     };
     rec.onend = () => {
       // stop() 时尚未定稿的半句，作为一句收下
-      if (lastInterim) { addSegment(lastInterim); lastInterim = ''; $('interim').textContent = ''; }
+      if (lastInterim) { pushChunk(lastInterim); lastInterim = ''; }
+      interimText = ''; showLive();
       clearTimeout(interimTimer);
       if (running) setTimeout(() => { if (!running) return; try { rec.start(); } catch(e) { makeRec(); try { rec.start(); } catch(_){} } }, 200);
-      else setStatus('已停止');
+      else { flush(); setStatus('已停止'); }
     };
   }
 
