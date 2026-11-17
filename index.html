@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>西语课堂 · 实时翻译</title>
+<style>
+  :root{
+    --bg:#f6f5f2; --panel:#ffffff; --text:#1d1d1f; --muted:#7a7a80; --line:#e4e2dc;
+    --accent:#c0392b; --accent-soft:#fbeae8; --ok:#2e7d4f; --zh-size:24px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141416; --panel:#1e1e21; --text:#ececef; --muted:#8d8d95; --line:#2e2e33; --accent:#ff6b5b; --accent-soft:#3a201d; --ok:#5cc28a; }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;display:flex;flex-direction:column}
+  header{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center}
+  h1{font-size:17px;margin:0 8px 0 0;font-weight:650;white-space:nowrap}
+  button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:8px;padding:6px 12px;cursor:pointer}
+  button:hover{border-color:var(--muted)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600;padding:8px 18px}
+  button.primary.on{background:var(--panel);color:var(--accent)}
+  button.small{font-size:12px;padding:3px 8px;border-radius:6px}
+  label{font-size:13px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+  #status{font-size:13px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+  #status .dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  #status.live .dot{background:var(--accent);animation:pulse 1.2s infinite}
+  @keyframes pulse{50%{opacity:.25}}
+  .spacer{flex:1}
+  #settings{background:var(--panel);border-bottom:1px solid var(--line);padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px 16px}
+  #settings[hidden]{display:none}
+  #settings .field{display:flex;flex-direction:column;gap:4px}
+  #settings .field.wide{grid-column:1/-1}
+  #settings span{font-size:12px;color:var(--muted)}
+  input[type=text],input[type=password],select,textarea{font:inherit;font-size:14px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);width:100%}
+  textarea{min-height:56px;resize:vertical}
+  #settings .actions{grid-column:1/-1;display:flex;gap:10px;align-items:center}
+  #testResult{font-size:13px;color:var(--muted)}
+  main{flex:1;overflow-y:auto;padding:16px 16px 8px}
+  .wrap{max-width:980px;margin:0 auto}
+  .empty{color:var(--muted);text-align:center;margin-top:12vh;line-height:1.9;font-size:15px}
+  .seg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+  .seg .meta{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-bottom:4px}
+  .seg .meta .tools{margin-left:auto;display:flex;gap:6px;opacity:.55}
+  .seg:hover .meta .tools{opacity:1}
+  .seg .es{color:var(--muted);font-size:calc(var(--zh-size) * .62);line-height:1.45;margin-bottom:4px}
+  body.hide-es .seg .es{display:none}
+  .seg .zh{font-size:var(--zh-size);line-height:1.5;font-weight:500}
+  .seg .zh.pending{color:var(--muted)}
+  .seg .err{color:var(--accent);font-size:13px;margin-top:4px}
+  .seg .explain{margin-top:10px;padding:10px 12px;background:var(--bg);border-radius:8px;font-size:15px;line-height:1.7;white-space:pre-wrap}
+  #live{background:var(--panel);border-top:1px solid var(--line);padding:10px 16px;min-height:48px}
+  #live .wrap{display:flex;gap:10px;align-items:baseline}
+  #live .label{font-size:12px;color:var(--muted);white-space:nowrap}
+  #interim{font-size:17px;color:var(--text);opacity:.8;font-style:italic}
+</style>
+</head>
+<body>
+<header>
+  <h1>西语课堂 · 实时翻译</h1>
+  <button id="startBtn" class="primary">● 开始听</button>
+  <span id="status"><span class="dot"></span><span id="statusText">未开始</span></span>
+  <span class="spacer"></span>
+  <label>字号 <input type="range" id="fontSize" min="16" max="44" value="24"></label>
+  <label><input type="checkbox" id="showEs" checked> 显示西语原文</label>
+  <button id="exportBtn">导出笔记</button>
+  <button id="clearBtn">清空</button>
+  <button id="settingsBtn">设置</button>
+</header>
+
+<section id="settings" hidden>
+  <div class="field">
+    <span>AI 服务</span>
+    <select id="provider">
+      <option value="deepseek">DeepSeek</option>
+      <option value="openai">OpenAI</option>
+      <option value="custom">其他（OpenAI 兼容接口）</option>
+    </select>
+  </div>
+  <div class="field">
+    <span>API 地址（Base URL）</span>
+    <input type="text" id="base" placeholder="https://api.deepseek.com">
+  </div>
+  <div class="field">
+    <span>模型</span>
+    <input type="text" id="model" placeholder="deepseek-chat">
+  </div>
+  <div class="field">
+    <span>API Key（只保存在这台电脑的浏览器里）</span>
+    <input type="password" id="apiKey" placeholder="sk-...">
+  </div>
+  <div class="field">
+    <span>老师的口音 / 识别语言</span>
+    <select id="lang">
+      <option value="es-ES">西班牙（es-ES）</option>
+      <option value="es-MX">墨西哥（es-MX）</option>
+      <option value="es-AR">阿根廷（es-AR）</option>
+      <option value="es-CO">哥伦比亚（es-CO）</option>
+      <option value="es-US">美国西语（es-US）</option>
+    </select>
+  </div>
+  <div class="field wide">
+    <span>本节课主题 / 背景（可选，帮助 AI 翻得更准，比如：“A2 西语课，今天讲过去时 pretérito indefinido”或“INEF 运动训练学研讨课”）</span>
+    <textarea id="topic"></textarea>
+  </div>
+  <div class="actions">
+    <button id="saveBtn" class="primary">保存</button>
+    <button id="testBtn">测试 API</button>
+    <span id="testResult"></span>
+  </div>
+</section>
+
+<main id="feedScroll"><div class="wrap" id="feed"></div></main>
+
+<div id="live"><div class="wrap"><span class="label">正在听：</span><span id="interim"></span></div></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const PRESETS = {
+    deepseek: { base: 'https://api.deepseek.com', model: 'deepseek-chat' },
+    openai:   { base: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
+    custom:   { base: '', model: '' }
+  };
+  const CFG_KEY = 'es-zh-live.cfg', SEG_KEY = 'es-zh-live.segments', UI_KEY = 'es-zh-live.ui';
+  const store = {
+    get(k, d){ try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e){ return d; } },
+    set(k, v){ try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} }
+  };
+
+  let cfg = Object.assign({ provider:'deepseek', base:PRESETS.deepseek.base, model:PRESETS.deepseek.model, key:'', lang:'es-ES', topic:'' }, store.get(CFG_KEY, {}));
+  let ui = Object.assign({ fontSize:24, showEs:true }, store.get(UI_KEY, {}));
+  let segments = store.get(SEG_KEY, []);
+  let nextId = segments.reduce((m, s) => Math.max(m, s.id), 0) + 1;
+
+  // ---------- UI basics ----------
+  function applyUi(){
+    document.documentElement.style.setProperty('--zh-size', ui.fontSize + 'px');
+    $('fontSize').value = ui.fontSize;
+    $('showEs').checked = ui.showEs;
+    document.body.classList.toggle('hide-es', !ui.showEs);
+  }
+  $('fontSize').oninput = e => { ui.fontSize = +e.target.value; applyUi(); store.set(UI_KEY, ui); };
+  $('showEs').onchange = e => { ui.showEs = e.target.checked; applyUi(); store.set(UI_KEY, ui); };
+
+  function setStatus(text, live){ $('statusText').textContent = text; $('status').classList.toggle('live', !!live); }
+
+  function fillSettings(){
+    $('provider').value = cfg.provider; $('base').value = cfg.base; $('model').value = cfg.model;
+    $('apiKey').value = cfg.key; $('lang').value = cfg.lang; $('topic').value = cfg.topic;
+  }
+  function readSettings(){
+    cfg.provider = $('provider').value; cfg.base = $('base').value.trim(); cfg.model = $('model').value.trim();
+    cfg.key = $('apiKey').value.trim(); cfg.lang = $('lang').value; cfg.topic = $('topic').value.trim();
+    store.set(CFG_KEY, cfg);
+  }
+  $('provider').onchange = e => { const p = PRESETS[e.target.value]; if (p.base) { $('base').value = p.base; $('model').value = p.model; } };
+  $('settingsBtn').onclick = () => { const s = $('settings'); s.hidden = !s.hidden; if (!s.hidden) fillSettings(); };
+  $('saveBtn').onclick = () => {
+    readSettings(); $('settings').hidden = true;
+    if (rec && running) { rec.lang = cfg.lang; }
+    setStatus(running ? '正在听…' : '设置已保存', running);
+  };
+  $('testBtn').onclick = async () => {
+    readSettings(); $('testResult').textContent = '测试中…';
+    try {
+      let out = '';
+      await callLLM([{ role:'system', content:'把西班牙语翻译成简体中文，只输出译文。' }, { role:'user', content:'Hola a todos, hoy vamos a hablar del pretérito indefinido.' }], d => { out += d; $('testResult').textContent = '✓ ' + out; });
+      if (!out) $('testResult').textContent = '接口通了，但没有返回内容，检查一下模型名';
+    } catch (e) { $('testResult').textContent = '✗ ' + e.message; }
+  };
+
+  // ---------- LLM call (OpenAI-compatible, streaming) ----------
+  async function callLLM(messages, onDelta){
+    if (!cfg.key) throw new Error('还没有填写 API Key');
+    const url = cfg.base.replace(/\/+$/, '') + '/chat/completions';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + cfg.key },
+      body: JSON.stringify({ model: cfg.model, messages, stream: true, temperature: 0.3 })
+    });
+    if (!res.ok) {
+      let t = ''; try { t = await res.text(); } catch(e){}
+      throw new Error('HTTP ' + res.status + ' ' + t.slice(0, 200));
+    }
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream:true });
+      const lines = buf.split('\n'); buf = lines.pop();
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line.startsWith('data:')) continue;
+        const data = line.slice(5).trim();
+        if (data === '[DONE]') continue;
+        try {
+          const j = JSON.parse(data);
+          const c = j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content;
+          if (c) onDelta(c);
+        } catch(e){}
+      }
+    }
+  }
+
+  function systemPrompt(){
+    return '你是西班牙语课堂的同声传译员，听众是一位正在学西语、还听不太懂的中国学生。\n' +
+      '输入是浏览器语音识别出的老师讲话，可能缺标点、有同音词识别错误或半句话，请结合前文合理推断后翻译成自然、口语化的简体中文。\n' +
+      '规则：只输出这一句的中文译文，不要解释、不要加引号、不要重复前文；老师在讲解的西语单词或语法术语，保留西语原词并在括号里给中文，如“pretérito indefinido（简单过去时）”；如果内容只是语气词或无法辨认，输出“（……）”。' +
+      (cfg.topic ? '\n本节课背景：' + cfg.topic : '');
+  }
+
+  async function translate(seg){
+    seg.zh = ''; seg.error = ''; seg.state = 'pending'; render(seg);
+    const prev = segments.filter(s => s.id < seg.id).slice(-4)
+      .map(s => '西：' + s.es + '\n中：' + (s.zh || '（翻译中）')).join('\n\n');
+    const user = (prev ? '【前文，仅供理解上下文，不要翻译】\n' + prev + '\n\n' : '') + '【请翻译这一句】\n' + seg.es;
+    try {
+      await callLLM([{ role:'system', content:systemPrompt() }, { role:'user', content:user }], d => { seg.zh += d; render(seg); });
+      seg.state = 'done';
+    } catch (e) {
+      seg.state = 'error'; seg.error = '翻译失败：' + e.message;
+    }
+    render(seg); persist();
+  }
+
+  async function explain(seg){
+    seg.explain = '讲解中…'; render(seg);
+    let out = '';
+    try {
+      await callLLM([
+        { role:'system', content:'你是耐心的西班牙语老师，学生母语是中文、水平初级。用简体中文讲解，简洁实用，不用 markdown 标题。' },
+        { role:'user', content:'老师上课说了这句（语音识别，可能有误）：\n' + seg.es + '\n\n请：1）给出更准确的原句（如识别有误）；2）逐个列出关键词/短语：西语 - 词性/原形 - 中文；3）如果有值得注意的语法点，用一两句话说明。' }
+      ], d => { out += d; seg.explain = out; render(seg); });
+    } catch (e) { seg.explain = '讲解失败：' + e.message; }
+    render(seg); persist();
+  }
+
+  // ---------- rendering ----------
+  const els = new Map();
+  function fmtTime(ts){ const d = new Date(ts); return d.toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit', second:'2-digit' }); }
+  function render(seg){
+    let el = els.get(seg.id);
+    if (!el) {
+      el = document.createElement('div'); el.className = 'seg';
+      el.innerHTML = '<div class="meta"><span class="t"></span><span class="tools">' +
+        '<button class="small b-exp">📖 讲解</button><button class="small b-re">重译</button><button class="small b-del">删除</button></span></div>' +
+        '<div class="es"></div><div class="zh"></div><div class="err"></div><div class="explain"></div>';
+      el.querySelector('.b-exp').onclick = () => explain(seg);
+      el.querySelector('.b-re').onclick = () => translate(seg);
+      el.querySelector('.b-del').onclick = () => { segments = segments.filter(s => s !== seg); el.remove(); els.delete(seg.id); persist(); showEmpty(); };
+      els.set(seg.id, el); $('feed').appendChild(el); showEmpty();
+    }
+    el.querySelector('.t').textContent = fmtTime(seg.time);
+    el.querySelector('.es').textContent = seg.es;
+    const zh = el.querySelector('.zh');
+    zh.textContent = seg.zh || (seg.state === 'pending' ? '翻译中…' : '');
+    zh.classList.toggle('pending', !seg.zh);
+    el.querySelector('.err').textContent = seg.error || '';
+    const ex = el.querySelector('.explain'); ex.textContent = seg.explain || ''; ex.style.display = seg.explain ? '' : 'none';
+    autoScroll();
+  }
+  function showEmpty(){
+    let e = $('emptyHint');
+    if (segments.length === 0 && !e) {
+      e = document.createElement('div'); e.id = 'emptyHint'; e.className = 'empty';
+      e.innerHTML = '第一次用：点右上角 <b>设置</b> 填好 API Key → 点 <b>● 开始听</b> → 允许使用麦克风。<br>把电脑放在能听清老师的位置，翻译会一句一句出现在这里。<br>看不懂某句时，点那一句右上角的 <b>📖 讲解</b>。';
+      $('feed').appendChild(e);
+    } else if (segments.length && e) e.remove();
+  }
+  let stick = true;
+  $('feedScroll').addEventListener('scroll', () => { const m = $('feedScroll'); stick = m.scrollHeight - m.scrollTop - m.clientHeight < 120; });
+  function autoScroll(){ if (stick) { const m = $('feedScroll'); m.scrollTop = m.scrollHeight; } }
+
+  let persistTimer = null;
+  function persist(){ clearTimeout(persistTimer); persistTimer = setTimeout(() => store.set(SEG_KEY, segments.map(s => ({ id:s.id, time:s.time, es:s.es, zh:s.zh, explain:s.explain, state:s.state === 'pending' ? 'error' : s.state }))), 400); }
+
+  function addSegment(text){
+    const seg = { id: nextId++, time: Date.now(), es: text, zh: '', state: 'pending' };
+    segments.push(seg); render(seg); translate(seg); persist();
+  }
+
+  $('clearBtn').onclick = () => {
+    if (!segments.length || !confirm('清空所有记录？（建议先导出笔记）')) return;
+    segments = []; els.clear(); $('feed').innerHTML = ''; persist(); showEmpty();
+  };
+  $('exportBtn').onclick = () => {
+    if (!segments.length) return;
+    const d = new Date(segments[0].time);
+    const title = '西语课堂笔记 ' + d.toLocaleDateString('zh-CN');
+    let md = '# ' + title + '\n\n' + (cfg.topic ? '> ' + cfg.topic + '\n\n' : '');
+    for (const s of segments) {
+      md += '**' + fmtTime(s.time) + '**  \n' + s.es + '  \n' + (s.zh || '') + '\n';
+      if (s.explain) md += '\n' + s.explain.split('\n').map(l => '> ' + l).join('\n') + '\n';
+      md += '\n';
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([md], { type:'text/markdown;charset=utf-8' }));
+    a.download = title.replace(/[\/:]/g, '-') + '.md'; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
+
+  // ---------- speech recognition ----------
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, running = false, wakeLock = null, lastInterim = '', interimTimer = null;
+
+  function makeRec(){
+    rec = new SR();
+    rec.lang = cfg.lang; rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1;
+    rec.onstart = () => setStatus('正在听…', true);
+    rec.onresult = e => {
+      let interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) { const t = r[0].transcript.trim(); if (t) addSegment(t); }
+        else interim += r[0].transcript;
+      }
+      lastInterim = interim.trim();
+      $('interim').textContent = interim;
+      // 老师一口气讲很久不停顿时，识别器可能迟迟不给最终结果：12 秒没更新就强制断句
+      clearTimeout(interimTimer);
+      if (lastInterim) interimTimer = setTimeout(() => { if (running && lastInterim) { try { rec.stop(); } catch(e){} } }, 12000);
+    };
+    rec.onerror = e => {
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        running = false; updateBtn(); setStatus('麦克风权限被拒绝：请在地址栏左侧允许麦克风后重试');
+      } else if (e.error === 'network') {
+        setStatus('语音识别需要联网，正在重试…', true);
+      } else if (e.error !== 'no-speech' && e.error !== 'aborted') {
+        setStatus('识别出错（' + e.error + '），正在重试…', true);
+      }
+    };
+    rec.onend = () => {
+      // stop() 时尚未定稿的半句，作为一句收下
+      if (lastInterim) { addSegment(lastInterim); lastInterim = ''; $('interim').textContent = ''; }
+      clearTimeout(interimTimer);
+      if (running) setTimeout(() => { if (!running) return; try { rec.start(); } catch(e) { makeRec(); try { rec.start(); } catch(_){} } }, 200);
+      else setStatus('已停止');
+    };
+  }
+
+  async function start(){
+    if (!SR) { alert('这个浏览器不支持语音识别，请用 Chrome、Edge 或 Safari 打开。'); return; }
+    if (!cfg.key) { $('settings').hidden = false; fillSettings(); setStatus('请先填写 API Key 并保存'); return; }
+    running = true; updateBtn(); makeRec();
+    try { rec.start(); } catch(e) {}
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch(e) {}
+  }
+  function stop(){
+    running = false; updateBtn();
+    try { rec && rec.stop(); } catch(e) {}
+    try { wakeLock && wakeLock.release(); } catch(e) {} wakeLock = null;
+  }
+  function updateBtn(){ const b = $('startBtn'); b.textContent = running ? '■ 停止' : '● 开始听'; b.classList.toggle('on', running); }
+  $('startBtn').onclick = () => running ? stop() : start();
+  document.addEventListener('visibilitychange', async () => {
+    if (running && document.visibilityState === 'visible' && 'wakeLock' in navigator) { try { wakeLock = await navigator.wakeLock.request('screen'); } catch(e) {} }
+  });
+  document.addEventListener('keydown', e => { if (e.code === 'Space' && e.target === document.body) { e.preventDefault(); running ? stop() : start(); } });
+
+  // ---------- init ----------
+  applyUi();
+  segments.forEach(render);
+  showEmpty();
+  if (!SR) setStatus('此浏览器不支持语音识别，请用 Chrome / Edge / Safari');
+  else if (!cfg.key) setStatus('先点“设置”填写 API Key');
+})();
+</script>
+</body>
+</html>
