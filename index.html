@@ -84,7 +84,7 @@
   </div>
   <div class="field">
     <span>模型</span>
-    <input type="text" id="model" placeholder="deepseek-chat">
+    <input type="text" id="model" placeholder="deepseek-flash">
   </div>
   <div class="field">
     <span>API Key（只保存在这台电脑的浏览器里）</span>
@@ -119,7 +119,7 @@
 (() => {
   const $ = id => document.getElementById(id);
   const PRESETS = {
-    deepseek: { base: 'https://api.deepseek.com', model: 'deepseek-chat' },
+    deepseek: { base: 'https://api.deepseek.com', model: 'deepseek-flash' },
     openai:   { base: 'https://api.openai.com/v1', model: 'gpt-4o-mini' },
     custom:   { base: '', model: '' }
   };
@@ -130,6 +130,7 @@
   };
 
   let cfg = Object.assign({ provider:'deepseek', base:PRESETS.deepseek.base, model:PRESETS.deepseek.model, key:'', lang:'es-ES', topic:'' }, store.get(CFG_KEY, {}));
+  if (cfg.model === 'deepseek-chat') cfg.model = 'deepseek-flash';
   let ui = Object.assign({ fontSize:24, showEs:true }, store.get(UI_KEY, {}));
   let segments = store.get(SEG_KEY, []);
   let nextId = segments.reduce((m, s) => Math.max(m, s.id), 0) + 1;
@@ -172,14 +173,20 @@
   };
 
   // ---------- LLM call (OpenAI-compatible, streaming) ----------
+  let noThinkingParam = false;
   async function callLLM(messages, onDelta){
     if (!cfg.key) throw new Error('还没有填写 API Key');
     const url = cfg.base.replace(/\/+$/, '') + '/chat/completions';
-    const res = await fetch(url, {
+    const payload = { model: cfg.model, messages, stream: true, temperature: 0.3 };
+    // 实时翻译要快：DeepSeek 新模型默认会先“思考”，这里关掉；接口不认这个参数就自动去掉重试
+    if (/deepseek/i.test(cfg.base) && !noThinkingParam) payload.thinking = { type: 'disabled' };
+    const send = () => fetch(url, {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + cfg.key },
-      body: JSON.stringify({ model: cfg.model, messages, stream: true, temperature: 0.3 })
+      body: JSON.stringify(payload)
     });
+    let res = await send();
+    if (res.status === 400 && payload.thinking) { noThinkingParam = true; delete payload.thinking; res = await send(); }
     if (!res.ok) {
       let t = ''; try { t = await res.text(); } catch(e){}
       throw new Error('HTTP ' + res.status + ' ' + t.slice(0, 200));
